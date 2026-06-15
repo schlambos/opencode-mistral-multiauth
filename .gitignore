@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+coverage/
+
+# Never commit user credentials or state files, even if accidentally placed in the repo.
+.env
+.env.*
+mistral.json
+.mistral.json
+mistral-accounts.json
+mistral.log
+mistral.log.*

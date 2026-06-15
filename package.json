@@ -1,0 +1,38 @@
+{
+  "name": "opencode-mistral-rotation",
+  "version": "0.1.0",
+  "description": "OpenCode plugin for Mistral API key rotation with health-score load balancing and exponential backoff",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^0.15.30",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}
