@@ -152,6 +152,44 @@ export class AccountManager {
     return account;
   }
 
+  /**
+   * Fast-path: return the account at `idx` if it is currently usable
+   * (active, healthy, not rate-limited). No selection logic, no disk save,
+   * no metric build. Used by the interceptor to bypass per-call evaluation
+   * when the pinned key is still good.
+   */
+  peekUsable(idx: number): ManagedAccount | null {
+    const account = this.state.accounts[idx];
+    if (!account) return null;
+    if (account.status === "invalid" || account.status === "disabled") return null;
+    if (account.status === "rate_limited") {
+      const reset = account.rateLimitResetTime;
+      if (reset !== undefined && reset > Date.now()) return null;
+      // Reset window expired — flip to active inline.
+      account.status = "active";
+      account.rateLimitResetTime = undefined;
+    }
+    if (this.health.getScore(idx) < this.minHealth) return null;
+    account.lastUsed = Date.now();
+    return account;
+  }
+
+  /**
+   * Lightweight success acknowledgement: skip disk write and health-score
+   * updates unless the account was previously in a degraded state. Healthy
+   * keys do not need bookkeeping on every successful call.
+   */
+  noteSuccess(idx: number): void {
+    const account = this.state.accounts[idx];
+    if (!account) return;
+    if (
+      account.status === "rate_limited" ||
+      account.consecutiveFailures > 0
+    ) {
+      this.markSuccess(idx);
+    }
+  }
+
   private buildMetrics(): AccountWithMetrics[] {
     const now = Date.now();
     return this.state.accounts.map((a) => {

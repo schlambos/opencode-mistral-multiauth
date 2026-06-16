@@ -97,6 +97,11 @@ export interface InterceptorDeps {
 export function createInterceptingFetch(deps: InterceptorDeps) {
   const { manager, retry, onSwitch } = deps;
 
+  // Pinned active key: chosen once at first call, reused on every subsequent
+  // fetch until it fails. Avoids per-call selection overhead.
+  let pinnedIndex: number | null = null;
+  let pinnedAnnounced = false;
+
   return async function interceptingFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -130,7 +135,14 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
           : new Error("Aborted");
       }
 
-      const account = manager.getActiveAccount();
+      let account =
+        pinnedIndex !== null ? manager.peekUsable(pinnedIndex) : null;
+      if (!account) {
+        account = manager.getActiveAccount();
+        if (account) {
+          pinnedIndex = account.index;
+        }
+      }
       if (!account) {
         const earliest = manager.getEarliestResetTime();
         if (earliest !== null) {
@@ -146,16 +158,17 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
       if (!sameKey) {
         if (onSwitch) {
           try {
-            if (lastKeyHash === null) {
+            if (!pinnedAnnounced) {
               onSwitch({
                 fromKeyHash: "",
                 toKeyHash: account.keyHash,
                 toAlias: account.alias,
                 reason: "initial",
               });
+              pinnedAnnounced = true;
             } else if (pendingSwitchReason !== null) {
               onSwitch({
-                fromKeyHash: lastKeyHash,
+                fromKeyHash: lastKeyHash ?? "",
                 toKeyHash: account.keyHash,
                 fromAlias: lastAlias,
                 toAlias: account.alias,
@@ -192,8 +205,14 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
         input instanceof Request ? undefined : injectAuthHeader(init, account.apiKey);
 
       let response: Response;
+      const fetchStart = Date.now();
       try {
         response = await fetch(requestInput, requestInit);
+        log.debug("fetch returned", {
+          keyHash: account.keyHash,
+          status: response.status,
+          waitMs: Date.now() - fetchStart,
+        });
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         log.warn("fetch failed", {
@@ -201,6 +220,7 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
           error: lastError.message,
         });
         manager.markFailure(account.index);
+        pinnedIndex = null;
         pendingSwitchReason = "network-error";
         pendingSwitchStatus = undefined;
         attempt++;
@@ -208,7 +228,7 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
       }
 
       if (response.ok) {
-        manager.markSuccess(account.index);
+        manager.noteSuccess(account.index);
         return response;
       }
 
@@ -216,6 +236,7 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
         const retryAfterMs = parseRetryAfter(response);
         const resetAt = Date.now() + (retryAfterMs ?? 30_000);
         manager.markRateLimited(account.index, resetAt, "429");
+        pinnedIndex = null;
         lastResponse = response;
         pendingSwitchReason = "429";
         pendingSwitchStatus = 429;
@@ -225,6 +246,7 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
 
       if (response.status === 401 || response.status === 403) {
         manager.markInvalid(account.index, `http-${response.status}`);
+        pinnedIndex = null;
         lastResponse = response;
         pendingSwitchReason = response.status === 401 ? "401" : "403";
         pendingSwitchStatus = response.status;
@@ -234,6 +256,7 @@ export function createInterceptingFetch(deps: InterceptorDeps) {
 
       if (response.status >= 500 && response.status < 600) {
         manager.markFailure(account.index);
+        pinnedIndex = null;
         lastResponse = response;
         pendingSwitchReason = "5xx";
         pendingSwitchStatus = response.status;
